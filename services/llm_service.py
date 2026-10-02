@@ -2,10 +2,10 @@ import json
 import re
 from typing import Any
 
-from huggingface_hub import InferenceClient
+from groq import Groq
 
 from config.settings import (
-    HF_TOKEN,
+    GROQ_API_KEY,
     LLM_MODEL,
     MAX_SCENES,
     MIN_SCENES,
@@ -15,8 +15,8 @@ from config.settings import (
 SYSTEM_PROMPT = """
 You are an expert educational video director.
 
-Your job is to convert educational source material into a
-short, accurate educational video plan.
+Your job is to convert educational source material into
+a short, accurate educational video plan.
 
 IMPORTANT RULES:
 
@@ -34,7 +34,7 @@ IMPORTANT RULES:
 12. Do not use Markdown.
 13. Do not put JSON inside ``` fences.
 
-Required JSON:
+Required JSON format:
 
 {
     "title": "Video title",
@@ -66,26 +66,28 @@ slide
 """
 
 
-def extract_json(text: str) -> dict[str, Any]:
+def extract_json(
+    text: str,
+) -> dict[str, Any]:
 
     text = text.strip()
 
-    # Remove Markdown JSON fences if the model accidentally adds them.
+    # Remove Markdown fences if model adds them.
     text = re.sub(
-        r"^```json",
+        r"^```json\s*",
         "",
         text,
         flags=re.IGNORECASE,
     )
 
     text = re.sub(
-        r"^```",
+        r"^```\s*",
         "",
         text,
     )
 
     text = re.sub(
-        r"```$",
+        r"\s*```$",
         "",
         text,
     )
@@ -95,16 +97,24 @@ def extract_json(text: str) -> dict[str, Any]:
 
     if start == -1 or end == -1:
         raise ValueError(
-            "Qwen did not return a valid JSON object."
+            "Groq/Qwen did not return valid JSON."
         )
 
     json_text = text[
         start:end + 1
     ]
 
-    return json.loads(
-        json_text
-    )
+    try:
+
+        return json.loads(
+            json_text
+        )
+
+    except json.JSONDecodeError as exc:
+
+        raise ValueError(
+            "The AI returned malformed JSON."
+        ) from exc
 
 
 def clean_scene(
@@ -144,6 +154,7 @@ def clean_scene(
 
     return {
         "scene_id": index,
+
         "narration": str(
             scene.get(
                 "narration",
@@ -178,19 +189,44 @@ def generate_scene_plan(
     target_seconds: int,
 ) -> dict[str, Any]:
 
-    if not HF_TOKEN:
+    # ========================================================
+    # CHECK GROQ KEY
+    # ========================================================
+
+    if not GROQ_API_KEY:
+
         raise RuntimeError(
-            "HF_TOKEN is missing. "
-            "Add HF_TOKEN to Streamlit Secrets."
+            "GROQ_API_KEY is missing. "
+            "Add GROQ_API_KEY to Streamlit Secrets."
         )
 
-    client = InferenceClient(
-        api_key=HF_TOKEN
-    )
+    # ========================================================
+    # CREATE GROQ CLIENT
+    # ========================================================
+
+    try:
+
+        client = Groq(
+            api_key=GROQ_API_KEY
+        )
+
+    except Exception as exc:
+
+        raise RuntimeError(
+            "Could not initialize Groq client."
+        ) from exc
+
+    # ========================================================
+    # CALCULATE TARGET WORD COUNT
+    # ========================================================
 
     target_words = round(
         target_seconds * 145 / 60
     )
+
+    # ========================================================
+    # USER PROMPT
+    # ========================================================
 
     user_prompt = f"""
 Create an educational video plan.
@@ -204,20 +240,28 @@ Education level:
 Target duration:
 approximately {target_seconds} seconds
 
-Target total narration length:
+Target narration length:
 approximately {target_words} words
 
 Number of scenes:
 {MIN_SCENES} to {MAX_SCENES}
+
+The video should be suitable for the selected
+education level.
 
 SOURCE EDUCATIONAL TEXT:
 
 {educational_text[:18000]}
 """
 
+    # ========================================================
+    # GROQ REQUEST
+    # ========================================================
+
     try:
 
         response = client.chat.completions.create(
+
             model=LLM_MODEL,
 
             messages=[
@@ -231,32 +275,60 @@ SOURCE EDUCATIONAL TEXT:
                 },
             ],
 
-            max_tokens=2400,
-
             temperature=0.2,
+
+            max_tokens=3000,
+
+            response_format={
+                "type": "json_object"
+            },
         )
 
     except Exception as exc:
 
         raise RuntimeError(
-            "Qwen inference failed. "
-            "Check HF_TOKEN, model access, or the "
-            "free inference allowance.\n\n"
+            "Qwen inference through Groq failed.\n\n"
+            "Check:\n"
+            "1. GROQ_API_KEY\n"
+            "2. Groq model availability\n"
+            "3. Groq free-plan limits\n\n"
             f"Original error: {exc}"
         ) from exc
 
+    # ========================================================
+    # CHECK RESPONSE
+    # ========================================================
+
     if not response.choices:
+
         raise RuntimeError(
-            "Qwen returned no response."
+            "Groq returned no response."
         )
 
-    content = response.choices[
-        0
-    ].message.content
+    content = (
+        response
+        .choices[0]
+        .message
+        .content
+    )
+
+    if not content:
+
+        raise RuntimeError(
+            "Groq returned an empty response."
+        )
+
+    # ========================================================
+    # PARSE JSON
+    # ========================================================
 
     plan = extract_json(
         content
     )
+
+    # ========================================================
+    # VALIDATE SCENES
+    # ========================================================
 
     raw_scenes = plan.get(
         "scenes",
@@ -267,8 +339,9 @@ SOURCE EDUCATIONAL TEXT:
         raw_scenes,
         list,
     ):
+
         raise ValueError(
-            "Qwen returned an invalid scenes list."
+            "AI returned an invalid scenes list."
         )
 
     scenes = []
@@ -290,17 +363,26 @@ SOURCE EDUCATIONAL TEXT:
         )
 
         if cleaned["narration"]:
+
             scenes.append(
                 cleaned
             )
 
+    # ========================================================
+    # MINIMUM SCENE CHECK
+    # ========================================================
+
     if len(scenes) < MIN_SCENES:
 
         raise ValueError(
-            f"Qwen returned only "
+            f"AI returned only "
             f"{len(scenes)} usable scenes. "
-            f"Please provide more educational content."
+            f"Expected at least {MIN_SCENES}."
         )
+
+    # ========================================================
+    # RETURN FINAL PLAN
+    # ========================================================
 
     return {
         "title": str(
