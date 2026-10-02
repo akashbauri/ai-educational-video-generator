@@ -12,59 +12,139 @@ from config.settings import (
 )
 
 
-SYSTEM_PROMPT = """
-You are an expert educational video director.
+# ============================================================
+# AIVA CHARACTER DEFINITION
+# ============================================================
 
-Your job is to convert educational source material into
-a short, accurate educational video plan.
+AIVA_CHARACTER = """
+AIVA is the main recurring character.
+
+AIVA must always look consistent:
+
+- small friendly educational robot
+- rounded white body
+- soft blue accents
+- large expressive blue eyes
+- small blue glowing chest light
+- small blue educational backpack
+- friendly child-safe appearance
+- cute but professional
+- no weapons
+- no scary appearance
+- no realistic human face
+
+IMPORTANT:
+Keep AIVA's physical appearance consistent across every scene.
+"""
+
+
+# ============================================================
+# VISUAL STYLE
+# ============================================================
+
+VISUAL_STYLE = """
+Visual style:
+
+- premium 3D educational animation
+- modern educational technology aesthetic
+- cinematic but child-friendly
+- professional classroom visuals
+- soft studio lighting
+- subtle depth of field
+- clean composition
+- rich but not distracting background
+- realistic 3D materials
+- high visual quality
+- 16:9 landscape composition
+- suitable for YouTube educational videos
+- suitable for Class 5 students
+- no watermark
+- no logo
+- no distorted objects
+- no unnecessary text
+- NO readable text inside generated images
+"""
+
+
+# ============================================================
+# SYSTEM PROMPT
+# ============================================================
+
+SYSTEM_PROMPT = f"""
+You are a professional educational video director.
+
+You create production-ready educational video scenes.
+
+{AIVA_CHARACTER}
+
+{VISUAL_STYLE}
 
 IMPORTANT RULES:
 
 1. Never invent facts.
-2. Stay faithful to the supplied educational material.
-3. Explain at the requested education level.
-4. Use simple spoken language.
-5. Each scene should teach one clear idea.
-6. Keep narration natural for voice narration.
-7. Use short on-screen text.
-8. Image prompts must describe visuals only.
-9. Do not put text inside image prompts.
-10. The final scene must summarize the lesson.
-11. Return ONLY valid JSON.
-12. Do not use Markdown.
-13. Do not put JSON inside ``` fences.
+2. Stay faithful to the source material.
+3. Use simple language appropriate for the education level.
+4. The narration must contain complete sentences.
+5. NEVER remove important information from the source.
+6. Every sentence generated for narration must be spoken.
+7. Do not create narration that is longer than the requested duration.
+8. Do not create extremely short narration.
+9. Every scene should have one clear educational purpose.
+10. Maintain continuity between scenes.
+11. AIVA must look consistent whenever she appears.
+12. Use visual storytelling rather than random pictures.
+13. Generated images must NOT contain readable text.
+14. On-screen text will be added separately by the application.
+15. Keep on-screen text short.
+16. Do not put subtitles inside image prompts.
+17. Use professional visual composition.
+18. Use different camera compositions between scenes.
+19. Use classroom, laboratory, digital learning or technology environments
+    when appropriate.
+20. The final scene should summarize the lesson.
+21. Return ONLY valid JSON.
 
-Required JSON format:
-
-{
-    "title": "Video title",
-    "scenes": [
-        {
-            "scene_id": 1,
-            "narration": "spoken narration",
-            "visual_type": "ai_image",
-            "image_prompt": "visual description",
-            "on_screen_text": "short text",
-            "animation": "zoom"
-        }
-    ]
-}
-
-Allowed visual_type values:
+Allowed visual types:
 
 ai_image
-animated_text
 diagram
 formula
+animated_text
 
-Allowed animation values:
+Allowed animations:
 
 zoom
 pan
 fade
 slide
+camera_push
+camera_pull
+
+Required JSON:
+
+{{
+    "title": "Video title",
+    "style": "professional educational 3D animation",
+    "character": "AIVA",
+    "scenes": [
+        {{
+            "scene_id": 1,
+            "narration": "Complete spoken narration.",
+            "visual_type": "ai_image",
+            "image_prompt": "Detailed visual description without readable text.",
+            "on_screen_text": "Short educational text",
+            "animation": "camera_push",
+            "camera_angle": "medium shot",
+            "visual_focus": "What the viewer should understand"
+        }}
+    ]
+}}
 """
 
+
+# ============================================================
+# JSON EXTRACTION
+# ============================================================
 
 def extract_json(
     text: str,
@@ -72,7 +152,6 @@ def extract_json(
 
     text = text.strip()
 
-    # Remove Markdown fences if model adds them.
     text = re.sub(
         r"^```json\s*",
         "",
@@ -96,26 +175,19 @@ def extract_json(
     end = text.rfind("}")
 
     if start == -1 or end == -1:
-        raise ValueError(
-            "Groq/Qwen did not return valid JSON."
-        )
-
-    json_text = text[
-        start:end + 1
-    ]
-
-    try:
-
-        return json.loads(
-            json_text
-        )
-
-    except json.JSONDecodeError as exc:
 
         raise ValueError(
-            "The AI returned malformed JSON."
-        ) from exc
+            "AI did not return valid JSON."
+        )
 
+    return json.loads(
+        text[start:end + 1]
+    )
+
+
+# ============================================================
+# CLEAN SCENE
+# ============================================================
 
 def clean_scene(
     scene: dict,
@@ -134,6 +206,8 @@ def clean_scene(
         "pan",
         "fade",
         "slide",
+        "camera_push",
+        "camera_pull",
     }
 
     visual_type = scene.get(
@@ -143,44 +217,75 @@ def clean_scene(
 
     animation = scene.get(
         "animation",
-        "zoom",
+        "camera_push",
     )
 
     if visual_type not in allowed_visuals:
         visual_type = "ai_image"
 
     if animation not in allowed_animations:
-        animation = "zoom"
+        animation = "camera_push"
+
+    narration = str(
+        scene.get(
+            "narration",
+            "",
+        )
+    ).strip()
+
+    image_prompt = str(
+        scene.get(
+            "image_prompt",
+            "",
+        )
+    ).strip()
+
+    on_screen_text = str(
+        scene.get(
+            "on_screen_text",
+            "",
+        )
+    ).strip()
+
+    # Add AIVA consistency instructions automatically.
+    image_prompt = f"""
+{AIVA_CHARACTER}
+
+{VISUAL_STYLE}
+
+SCENE:
+{image_prompt}
+
+IMPORTANT:
+AIVA's appearance must remain consistent with previous scenes.
+Do not add readable text to the image.
+""".strip()
 
     return {
         "scene_id": index,
-
-        "narration": str(
-            scene.get(
-                "narration",
-                "",
-            )
-        ).strip(),
-
+        "narration": narration,
         "visual_type": visual_type,
-
-        "image_prompt": str(
-            scene.get(
-                "image_prompt",
-                "",
-            )
-        ).strip(),
-
-        "on_screen_text": str(
-            scene.get(
-                "on_screen_text",
-                "",
-            )
-        ).strip()[:150],
-
+        "image_prompt": image_prompt,
+        "on_screen_text": on_screen_text[:120],
         "animation": animation,
+        "camera_angle": str(
+            scene.get(
+                "camera_angle",
+                "medium shot",
+            )
+        ),
+        "visual_focus": str(
+            scene.get(
+                "visual_focus",
+                "",
+            )
+        ),
     }
 
+
+# ============================================================
+# MAIN SCENE GENERATOR
+# ============================================================
 
 def generate_scene_plan(
     educational_text: str,
@@ -189,79 +294,64 @@ def generate_scene_plan(
     target_seconds: int,
 ) -> dict[str, Any]:
 
-    # ========================================================
-    # CHECK GROQ KEY
-    # ========================================================
-
     if not GROQ_API_KEY:
 
         raise RuntimeError(
             "GROQ_API_KEY is missing. "
-            "Add GROQ_API_KEY to Streamlit Secrets."
+            "Add it to Streamlit Secrets."
         )
 
-    # ========================================================
-    # CREATE GROQ CLIENT
-    # ========================================================
-
-    try:
-
-        client = Groq(
-            api_key=GROQ_API_KEY
-        )
-
-    except Exception as exc:
-
-        raise RuntimeError(
-            "Could not initialize Groq client."
-        ) from exc
-
-    # ========================================================
-    # CALCULATE TARGET WORD COUNT
-    # ========================================================
-
-    target_words = round(
-        target_seconds * 145 / 60
+    client = Groq(
+        api_key=GROQ_API_KEY
     )
 
-    # ========================================================
-    # USER PROMPT
-    # ========================================================
+    target_words = round(
+        target_seconds * 130 / 60
+    )
 
     user_prompt = f"""
-Create an educational video plan.
+Create a professional educational video.
 
-Language:
+LANGUAGE:
 {language}
 
-Education level:
+EDUCATION LEVEL:
 {education_level}
 
-Target duration:
-approximately {target_seconds} seconds
+TARGET DURATION:
+{target_seconds} seconds
 
-Target narration length:
-approximately {target_words} words
+TARGET NARRATION:
+Approximately {target_words} words.
 
-Number of scenes:
-{MIN_SCENES} to {MAX_SCENES}
+IMPORTANT:
+Every word written in "narration" will be spoken by the
+AI voice.
 
-The video should be suitable for the selected
-education level.
+Do not put important information outside narration.
 
-SOURCE EDUCATIONAL TEXT:
+Create {MIN_SCENES} to {MAX_SCENES} scenes.
+
+Each scene should contain:
+
+1. Complete narration.
+2. Strong visual storytelling.
+3. Short on-screen text.
+4. Camera direction.
+5. Animation.
+6. Visual focus.
+
+Make the video feel like a professional educational
+YouTube animation rather than a slideshow.
+
+SOURCE MATERIAL:
 
 {educational_text[:18000]}
 """
 
-    # ========================================================
-    # GROQ REQUEST
-    # ========================================================
-
     try:
 
         response = client.chat.completions.create(
-
             model=LLM_MODEL,
 
             messages=[
@@ -275,9 +365,9 @@ SOURCE EDUCATIONAL TEXT:
                 },
             ],
 
-            temperature=0.2,
+            temperature=0.25,
 
-            max_tokens=3000,
+            max_tokens=3500,
 
             response_format={
                 "type": "json_object"
@@ -287,22 +377,14 @@ SOURCE EDUCATIONAL TEXT:
     except Exception as exc:
 
         raise RuntimeError(
-            "Qwen inference through Groq failed.\n\n"
-            "Check:\n"
-            "1. GROQ_API_KEY\n"
-            "2. Groq model availability\n"
-            "3. Groq free-plan limits\n\n"
-            f"Original error: {exc}"
+            "Qwen scene generation failed through Groq.\n\n"
+            f"{exc}"
         ) from exc
-
-    # ========================================================
-    # CHECK RESPONSE
-    # ========================================================
 
     if not response.choices:
 
         raise RuntimeError(
-            "Groq returned no response."
+            "The AI returned no response."
         )
 
     content = (
@@ -315,20 +397,12 @@ SOURCE EDUCATIONAL TEXT:
     if not content:
 
         raise RuntimeError(
-            "Groq returned an empty response."
+            "The AI returned empty content."
         )
-
-    # ========================================================
-    # PARSE JSON
-    # ========================================================
 
     plan = extract_json(
         content
     )
-
-    # ========================================================
-    # VALIDATE SCENES
-    # ========================================================
 
     raw_scenes = plan.get(
         "scenes",
@@ -341,7 +415,7 @@ SOURCE EDUCATIONAL TEXT:
     ):
 
         raise ValueError(
-            "AI returned an invalid scenes list."
+            "Invalid scenes returned by AI."
         )
 
     scenes = []
@@ -368,29 +442,28 @@ SOURCE EDUCATIONAL TEXT:
                 cleaned
             )
 
-    # ========================================================
-    # MINIMUM SCENE CHECK
-    # ========================================================
-
     if len(scenes) < MIN_SCENES:
 
         raise ValueError(
-            f"AI returned only "
-            f"{len(scenes)} usable scenes. "
-            f"Expected at least {MIN_SCENES}."
+            f"AI created only {len(scenes)} usable scenes."
         )
-
-    # ========================================================
-    # RETURN FINAL PLAN
-    # ========================================================
 
     return {
         "title": str(
             plan.get(
                 "title",
-                "Educational Lesson",
+                "AI Educational Lesson",
             )
         ).strip()[:120],
+
+        "style": str(
+            plan.get(
+                "style",
+                "professional educational animation",
+            )
+        ),
+
+        "character": "AIVA",
 
         "scenes": scenes,
     }
