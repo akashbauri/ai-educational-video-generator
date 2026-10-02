@@ -10,22 +10,19 @@ def srt_time(
     )
 
     hours = (
-        milliseconds
-        // 3_600_000
+        milliseconds // 3_600_000
     )
 
     milliseconds %= 3_600_000
 
     minutes = (
-        milliseconds
-        // 60_000
+        milliseconds // 60_000
     )
 
     milliseconds %= 60_000
 
     secs = (
-        milliseconds
-        // 1000
+        milliseconds // 1000
     )
 
     milliseconds %= 1000
@@ -38,57 +35,107 @@ def srt_time(
     )
 
 
+def split_text(
+    text: str,
+    max_words: int = 9,
+) -> list[str]:
+
+    words = text.split()
+
+    chunks = []
+
+    current = []
+
+    for word in words:
+
+        current.append(
+            word
+        )
+
+        if len(current) >= max_words:
+
+            chunks.append(
+                " ".join(current)
+            )
+
+            current = []
+
+    if current:
+
+        chunks.append(
+            " ".join(current)
+        )
+
+    return chunks
+
+
 def create_srt(
     scenes: list[dict],
     durations: list[float],
     output_path: Path,
 ) -> Path:
 
-    current_time = 0.0
-
     blocks = []
 
-    for index, (
-        scene,
-        duration,
-    ) in enumerate(
-        zip(
-            scenes,
-            durations,
-        ),
-        start=1,
+    current_time = 0.0
+
+    subtitle_number = 1
+
+    for scene, duration in zip(
+        scenes,
+        durations,
     ):
-
-        start = current_time
-
-        end = (
-            current_time
-            + duration
-        )
 
         narration = scene.get(
             "narration",
             "",
+        ).strip()
+
+        if not narration:
+            continue
+
+        chunks = split_text(
+            narration,
+            max_words=9,
         )
 
-        narration = (
-            narration
-            .replace("\n", " ")
-            .strip()
+        total_words = sum(
+            len(chunk.split())
+            for chunk in chunks
         )
 
-        block = (
-            f"{index}\n"
-            f"{srt_time(start)} --> "
-            f"{srt_time(end)}\n"
-            f"{narration}\n"
-        )
+        if total_words == 0:
+            continue
 
-        blocks.append(
-            block
-        )
+        for chunk in chunks:
 
-        current_time = end
+            word_count = len(
+                chunk.split()
+            )
+
+            chunk_duration = (
+                duration
+                * word_count
+                / total_words
+            )
+
+            start = current_time
+
+            end = (
+                current_time
+                + chunk_duration
+            )
+
+            blocks.append(
+                f"{subtitle_number}\n"
+                f"{srt_time(start)} --> "
+                f"{srt_time(end)}\n"
+                f"{chunk}\n"
+            )
+
+            subtitle_number += 1
+
+            current_time = end
 
     output_path.write_text(
         "\n".join(blocks),
