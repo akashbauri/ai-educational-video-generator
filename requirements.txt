@@ -2,3 +2,4 @@ streamlit>=1.50,<2.0
 huggingface_hub>=0.35,<1.0
 Pillow>=11,<13
 edge-tts==7.2.8
+groq>=0.30,<1.0
