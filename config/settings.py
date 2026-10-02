@@ -6,8 +6,8 @@ import streamlit as st
 
 def get_secret(name: str, default: Any = None) -> Any:
     """
-    Read a value from Streamlit Secrets first.
-    If it is not available, use an environment variable.
+    Read configuration from Streamlit Secrets first,
+    then fall back to environment variables.
     """
 
     try:
@@ -23,15 +23,42 @@ def get_secret(name: str, default: Any = None) -> Any:
 
 
 # ============================================================
-# AI CONFIGURATION
+# API KEYS
 # ============================================================
 
-HF_TOKEN = get_secret("HF_TOKEN", "")
+GROQ_API_KEY = get_secret(
+    "GROQ_API_KEY",
+    "",
+)
 
+HF_TOKEN = get_secret(
+    "HF_TOKEN",
+    "",
+)
+
+GEMINI_API_KEY = get_secret(
+    "GEMINI_API_KEY",
+    "",
+)
+
+
+# ============================================================
+# LLM CONFIGURATION
+# ============================================================
+
+# Primary LLM provider
+LLM_PROVIDER = "groq"
+
+# Current Groq Qwen model.
 LLM_MODEL = get_secret(
     "LLM_MODEL",
-    "Qwen/Qwen3-4B-Instruct-2507",
+    "qwen/qwen3.8-27b",
 )
+
+
+# ============================================================
+# IMAGE CONFIGURATION
+# ============================================================
 
 IMAGE_MODEL = get_secret(
     "IMAGE_MODEL",
@@ -47,7 +74,17 @@ VIDEO_WIDTH = 1280
 VIDEO_HEIGHT = 720
 FPS = 24
 
+
+# ============================================================
+# SCENE CONFIGURATION
+# ============================================================
+
 MIN_SCENES = 4
 MAX_SCENES = 8
+
+
+# ============================================================
+# NARRATION CONFIGURATION
+# ============================================================
 
 WORDS_PER_MINUTE = 145
