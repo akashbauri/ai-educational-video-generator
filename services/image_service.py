@@ -11,32 +11,88 @@ from config.settings import (
 )
 
 
-def get_font(size: int):
+AIVA_STYLE = """
+AIVA CHARACTER DESIGN:
 
-    font_candidates = [
+Small friendly educational robot.
+
+Appearance:
+- rounded white body
+- soft blue metallic accents
+- large expressive blue eyes
+- small blue glowing chest light
+- small blue educational backpack
+- friendly smile
+- child-safe design
+- premium 3D animated character
+
+AIVA must look like the SAME CHARACTER
+throughout the entire educational video.
+"""
+
+
+PRO_STYLE = """
+VISUAL STYLE:
+
+Premium 3D educational animation.
+
+Modern educational technology aesthetic.
+
+Cinematic classroom lighting.
+
+Soft volumetric light.
+
+Subtle depth of field.
+
+Professional composition.
+
+Clean modern environment.
+
+Rich but controlled background.
+
+High-quality 3D materials.
+
+YouTube educational video quality.
+
+16:9 landscape.
+
+No watermark.
+
+No logo.
+
+No distorted text.
+
+No readable text.
+"""
+
+
+def get_font(
+    size: int,
+):
+
+    candidates = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
     ]
 
-    for font_path in font_candidates:
+    for path in candidates:
 
-        path = Path(
-            font_path
-        )
+        file = Path(path)
 
-        if path.exists():
+        if file.exists():
 
             return ImageFont.truetype(
-                str(path),
+                str(file),
                 size=size,
             )
 
     return ImageFont.load_default()
 
 
-def create_fallback_slide(
+def create_professional_fallback(
     title: str,
     text: str,
+    scene_number: int,
     output_path: Path,
 ) -> Path:
 
@@ -45,71 +101,104 @@ def create_fallback_slide(
         (
             VIDEO_WIDTH,
             VIDEO_HEIGHT,
-        ),
-        "white",
+    ),
+        "#071426",
     )
 
     draw = ImageDraw.Draw(
         image
     )
 
+    # Decorative circles.
+    draw.ellipse(
+        (
+            850,
+            -100,
+            1450,
+            500,
+        ),
+        fill="#12385C",
+    )
+
+    draw.ellipse(
+        (
+            -200,
+            500,
+            400,
+            1100,
+        ),
+        fill="#102B48",
+    )
+
     title_font = get_font(
-        48
+        52
     )
 
     body_font = get_font(
-        30
+        32
+    )
+
+    small_font = get_font(
+        22
     )
 
     draw.text(
-        (70, 60),
+        (70, 55),
         title[:80],
         font=title_font,
-        fill="black",
+        fill="white",
     )
 
+    draw.text(
+        (70, 135),
+        f"LESSON • SCENE {scene_number}",
+        font=small_font,
+        fill="#8ED8FF",
+    )
+
+    # Word wrapping.
     words = text.split()
 
     lines = []
 
-    current_line = ""
+    current = ""
 
     for word in words:
 
-        test_line = (
-            f"{current_line} {word}"
+        test = (
+            f"{current} {word}"
         ).strip()
 
-        if len(test_line) > 52:
+        if len(test) > 48:
 
-            if current_line:
+            if current:
                 lines.append(
-                    current_line
+                    current
                 )
 
-            current_line = word
+            current = word
 
         else:
 
-            current_line = test_line
+            current = test
 
-    if current_line:
+    if current:
         lines.append(
-            current_line
+            current
         )
 
-    y = 190
+    y = 235
 
-    for line in lines[:10]:
+    for line in lines[:8]:
 
         draw.text(
             (80, y),
             line,
             font=body_font,
-            fill="black",
+            fill="white",
         )
 
-        y += 55
+        y += 58
 
     image.save(
         output_path,
@@ -123,42 +212,51 @@ def generate_scene_image(
     prompt: str,
     on_screen_text: str,
     scene_title: str,
+    scene_number: int,
     output_path: Path,
 ) -> tuple[Path, bool]:
 
     if not HF_TOKEN:
 
         return (
-            create_fallback_slide(
+            create_professional_fallback(
                 scene_title,
                 on_screen_text,
+                scene_number,
                 output_path,
             ),
             False,
         )
+
+    full_prompt = f"""
+{AIVA_STYLE}
+
+{PRO_STYLE}
+
+SCENE DESCRIPTION:
+
+{prompt}
+
+IMPORTANT:
+
+AIVA must retain the same:
+- body shape
+- eye design
+- blue accents
+- backpack
+- chest light
+- friendly appearance
+
+Do not put any readable text inside the generated image.
+
+Create a cinematic educational scene.
+"""
 
     try:
 
         client = InferenceClient(
             api_key=HF_TOKEN
         )
-
-        full_prompt = f"""
-Educational illustration for a classroom video.
-
-{prompt}
-
-Style:
-clean educational illustration,
-professional,
-clear subject,
-good composition,
-high quality,
-classroom friendly,
-no watermark,
-no logo,
-no readable text.
-"""
 
         image = client.text_to_image(
             prompt=full_prompt,
@@ -173,7 +271,8 @@ no readable text.
             (
                 VIDEO_WIDTH,
                 VIDEO_HEIGHT,
-            )
+            ),
+            Image.Resampling.LANCZOS,
         )
 
         image.save(
@@ -188,14 +287,11 @@ no readable text.
 
     except Exception:
 
-        # IMPORTANT:
-        # The video should still be able to render
-        # if free image inference is temporarily unavailable.
-
         return (
-            create_fallback_slide(
+            create_professional_fallback(
                 scene_title,
                 on_screen_text,
+                scene_number,
                 output_path,
             ),
             False,
