@@ -1,32 +1,14 @@
 import streamlit as st
 
-from services.llm_service import (
-    generate_scene_plan,
-)
+from services.llm_service import generate_scene_plan
+from services.visual_decision_service import decide_visual
+from services.image_service import generate_scene_image
+from services.tts_service import generate_voice
+from services.subtitle_service import create_srt
+from services.video_service import build_video
+from services.animation_service import create_animation_video
 
-from services.visual_decision_service import (
-    decide_visual,
-)
-
-from services.image_service import (
-    generate_scene_image,
-)
-
-from services.tts_service import (
-    generate_voice,
-)
-
-from services.subtitle_service import (
-    create_srt,
-)
-
-from services.video_service import (
-    build_video,
-)
-
-from utils.file_utils import (
-    make_job_dir,
-)
+from utils.file_utils import make_job_dir
 
 
 # ============================================================
@@ -84,6 +66,15 @@ st.markdown(
         margin-bottom: 8px;
     }
 
+    .animation-badge {
+        display: inline-block;
+        padding: 6px 12px;
+        border-radius: 20px;
+        background-color: #e9fff3;
+        font-weight: 600;
+        margin-bottom: 8px;
+    }
+
     </style>
     """,
     unsafe_allow_html=True,
@@ -103,7 +94,8 @@ st.markdown(
     """
     <div class="subtitle">
     Create intelligent educational videos with AI narration,
-    multilingual text, visual explanations, diagrams and animations.
+    multilingual text, visual explanations, diagrams,
+    formulas and real educational animations.
     </div>
     """,
     unsafe_allow_html=True,
@@ -115,13 +107,12 @@ st.markdown(
 # ============================================================
 
 st.sidebar.title("⚙️ Video Settings")
-
 st.sidebar.markdown("---")
 
 
-# ------------------------------------------------------------
+# ============================================================
 # LANGUAGE
-# ------------------------------------------------------------
+# ============================================================
 
 language = st.sidebar.selectbox(
     "🌐 Language",
@@ -133,9 +124,9 @@ language = st.sidebar.selectbox(
 )
 
 
-# ------------------------------------------------------------
+# ============================================================
 # EDUCATION LEVEL
-# ------------------------------------------------------------
+# ============================================================
 
 education_level = st.sidebar.selectbox(
     "🎓 Education Level",
@@ -150,9 +141,9 @@ education_level = st.sidebar.selectbox(
 )
 
 
-# ------------------------------------------------------------
+# ============================================================
 # SUBJECT
-# ------------------------------------------------------------
+# ============================================================
 
 subject = st.sidebar.selectbox(
     "📚 Subject",
@@ -169,9 +160,9 @@ subject = st.sidebar.selectbox(
 )
 
 
-# ------------------------------------------------------------
+# ============================================================
 # VIDEO DURATION
-# ------------------------------------------------------------
+# ============================================================
 
 duration = st.sidebar.slider(
     "⏱️ Target Duration (seconds)",
@@ -182,9 +173,9 @@ duration = st.sidebar.slider(
 )
 
 
-# ------------------------------------------------------------
+# ============================================================
 # VISUAL MODE
-# ------------------------------------------------------------
+# ============================================================
 
 visual_mode = st.sidebar.selectbox(
     "🎬 Visual Mode",
@@ -196,18 +187,46 @@ visual_mode = st.sidebar.selectbox(
 )
 
 
-# ------------------------------------------------------------
+# ============================================================
+# VOICE
+# ============================================================
+
+voice_style = st.sidebar.selectbox(
+    "🎙️ Voice",
+    [
+        "Female Teacher",
+        "Male Teacher",
+    ],
+)
+
+
+speech_rate = st.sidebar.slider(
+    "🗣️ Speech Speed",
+    -15,
+    15,
+    0,
+    5,
+)
+
+
+# ============================================================
 # INFORMATION
-# ------------------------------------------------------------
+# ============================================================
 
 st.sidebar.markdown("---")
 
 st.sidebar.info(
     """
-    **Current AI Engine**
+    **AI Educational Video Engine**
 
     🧠 Qwen  
     🎨 AI Visuals  
+    🎞️ Real Frame Animation  
+    📐 Formula Animation  
+    🔬 Physics Visuals  
+    🧪 Chemistry Visuals  
+    📊 Diagram & Chart Engine  
+    🤖 AIVA Character  
     🎙️ Multilingual Voice  
     📝 Subtitles  
     🎬 FFmpeg  
@@ -262,6 +281,7 @@ with st.expander("🤖 Meet AIVA — Your AI Educational Assistant"):
             - Child-safe
             - Friendly
             - Intelligent
+            - Visual Teacher
             """
         )
 
@@ -269,8 +289,8 @@ with st.expander("🤖 Meet AIVA — Your AI Educational Assistant"):
         st.markdown(
             """
             AIVA helps students understand difficult concepts
-            using simple explanations, visual examples and
-            step-by-step teaching.
+            using simple explanations, visual examples,
+            formulas, diagrams and step-by-step teaching.
 
             AIVA can appear during:
 
@@ -279,6 +299,7 @@ with st.expander("🤖 Meet AIVA — Your AI Educational Assistant"):
             - Questions
             - Examples
             - Summaries
+            - Closing
             """
         )
 
@@ -300,9 +321,9 @@ generate_button = st.button(
 
 if generate_button:
 
-    # --------------------------------------------------------
+    # ========================================================
     # INPUT VALIDATION
-    # --------------------------------------------------------
+    # ========================================================
 
     if not educational_text.strip():
 
@@ -322,9 +343,9 @@ if generate_button:
         st.stop()
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # JOB DIRECTORY
-    # --------------------------------------------------------
+    # ========================================================
 
     try:
 
@@ -358,12 +379,11 @@ if generate_button:
         st.stop()
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # PROGRESS
-    # --------------------------------------------------------
+    # ========================================================
 
     progress = st.progress(0)
-
     status = st.empty()
 
 
@@ -377,7 +397,6 @@ if generate_button:
 
     progress.progress(10)
 
-
     try:
 
         scenes = generate_scene_plan(
@@ -389,7 +408,6 @@ if generate_button:
 
     except TypeError:
 
-        # Compatibility fallback for older llm_service signature
         try:
 
             scenes = generate_scene_plan(
@@ -431,12 +449,15 @@ if generate_button:
 
 
     # ========================================================
-    # SCENE DATA
+    # DATA STORAGE
     # ========================================================
 
     image_files = []
+    animation_files = []
     audio_files = []
+
     actual_durations = []
+
     visual_decisions = []
 
 
@@ -488,9 +509,11 @@ if generate_button:
                 "animation": "fade",
                 "visual_prompt": narration,
                 "formula": "",
+                "explanation": narration,
                 "chart_data": [],
                 "diagram_elements": [],
                 "whiteboard_steps": [],
+                "equation_steps": [],
             }
 
 
@@ -511,9 +534,10 @@ if generate_button:
         # STORE DECISION
         # ----------------------------------------------------
 
-        scene["visual_type"] = visual_decision[
-            "visual_type"
-        ]
+        scene["visual_type"] = visual_decision.get(
+            "visual_type",
+            "ai_image",
+        )
 
         scene["visual_decision"] = visual_decision
 
@@ -522,35 +546,44 @@ if generate_button:
         )
 
 
-        # ====================================================
+        # ----------------------------------------------------
         # SHOW SCENE INFORMATION
-        # ====================================================
+        # ----------------------------------------------------
+
+        visual_name = (
+            visual_decision
+            .get("visual_type", "ai_image")
+            .replace("_", " ")
+            .title()
+        )
 
         with st.expander(
-            f"🎬 Scene {index} — "
-            f"{visual_decision['visual_type'].replace('_', ' ').title()}",
+            f"🎬 Scene {index} — {visual_name}",
             expanded=False,
         ):
 
             st.markdown(
                 f"""
                 <div class="visual-badge">
-                🎨 {visual_decision['visual_type'].replace('_', ' ').title()}
+                🎨 {visual_name}
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
             st.write(
-                f"**Subject:** {visual_decision['subject']}"
+                f"**Subject:** "
+                f"{visual_decision.get('subject', subject)}"
             )
 
             st.write(
-                f"**Reason:** {visual_decision['reason']}"
+                f"**Reason:** "
+                f"{visual_decision.get('reason', 'AI-selected visual')}"
             )
 
             st.write(
-                f"**Animation:** {visual_decision['animation']}"
+                f"**Animation:** "
+                f"{visual_decision.get('animation', 'smooth')}"
             )
 
             if visual_decision.get("formula"):
@@ -566,11 +599,11 @@ if generate_button:
 
 
     # ========================================================
-    # STEP 3 — VISUAL + VOICE GENERATION
+    # STEP 3 — VOICE GENERATION
     # ========================================================
 
     status.info(
-        "🎬 Step 3/6 — Creating visuals and AI narration..."
+        "🎙️ Step 3/6 — Creating multilingual AI narration..."
     )
 
     progress.progress(40)
@@ -586,105 +619,6 @@ if generate_button:
             "",
         ).strip()
 
-        visual_decision = scene.get(
-            "visual_decision",
-            {},
-        )
-
-
-        # ----------------------------------------------------
-        # IMAGE
-        # ----------------------------------------------------
-
-        image_path = image_dir / (
-            f"scene_{index:02d}.png"
-        )
-
-
-        visual_type = visual_decision.get(
-            "visual_type",
-            "ai_image",
-        )
-
-
-        image_prompt = visual_decision.get(
-            "visual_prompt",
-            scene.get(
-                "image_prompt",
-                narration,
-            ),
-        )
-
-
-        on_screen_text = scene.get(
-            "on_screen_text",
-            "",
-        )
-
-
-        try:
-
-            generate_scene_image(
-                prompt=image_prompt,
-                on_screen_text=on_screen_text,
-                scene_title=scene.get(
-                    "visual_focus",
-                    f"Scene {index}",
-                ),
-                scene_number=index,
-                output_path=image_path,
-            )
-
-        except TypeError:
-
-            # Compatibility with older image service
-            try:
-
-                generate_scene_image(
-                    prompt=image_prompt,
-                    on_screen_text=on_screen_text,
-                    scene_title=scene.get(
-                        "visual_focus",
-                        f"Scene {index}",
-                    ),
-                    scene_number=index,
-                    output_path=image_path,
-                )
-
-            except Exception as exc:
-
-                st.error(
-                    f"Image generation failed for Scene {index}:\n{exc}"
-                )
-
-                st.stop()
-
-        except Exception as exc:
-
-            st.error(
-                f"Image generation failed for Scene {index}:\n{exc}"
-            )
-
-            st.stop()
-
-
-        if not image_path.exists():
-
-            st.error(
-                f"Image was not created for Scene {index}."
-            )
-
-            st.stop()
-
-
-        image_files.append(
-            image_path
-        )
-
-
-        # ----------------------------------------------------
-        # VOICE
-        # ----------------------------------------------------
 
         audio_path = audio_dir / (
             f"scene_{index:02d}.mp3"
@@ -697,12 +631,36 @@ if generate_button:
                 text=narration,
                 language=language,
                 output_path=audio_path,
+                voice_style=voice_style,
+                speech_rate=speech_rate,
             )
+
+        except TypeError:
+
+            # Compatibility with older TTS implementation
+
+            try:
+
+                generated_audio = generate_voice(
+                    text=narration,
+                    language=language,
+                    output_path=audio_path,
+                )
+
+            except Exception as exc:
+
+                st.error(
+                    f"Voice generation failed "
+                    f"for Scene {index}:\n{exc}"
+                )
+
+                st.stop()
 
         except Exception as exc:
 
             st.error(
-                f"Voice generation failed for Scene {index}:\n{exc}"
+                f"Voice generation failed "
+                f"for Scene {index}:\n{exc}"
             )
 
             st.stop()
@@ -727,7 +685,6 @@ if generate_button:
 
             generated_audio_path = generated_audio
 
-            # Older implementation compatibility
             generated_duration = 0.0
 
 
@@ -749,58 +706,272 @@ if generate_button:
         )
 
 
+    # ========================================================
+    # STEP 4 — VISUAL GENERATION + TRUE ANIMATION
+    # ========================================================
+
+    status.info(
+        "🎬 Step 4/6 — Creating visuals and real animations..."
+    )
+
+    progress.progress(55)
+
+
+    # Types that use the frame-based animation engine
+    animation_types = {
+        "formula",
+        "equation",
+        "diagram",
+        "physics",
+        "chemistry",
+        "aiva",
+        "animation",
+    }
+
+
+    for index, scene in enumerate(
+        scenes,
+        start=1,
+    ):
+
+        narration = scene.get(
+            "narration",
+            "",
+        ).strip()
+
+        visual_decision = scene.get(
+            "visual_decision",
+            {},
+        )
+
+        visual_type = visual_decision.get(
+            "visual_type",
+            "ai_image",
+        )
+
+
         # ----------------------------------------------------
-        # SCENE PREVIEW
+        # ACTUAL SCENE DURATION
         # ----------------------------------------------------
 
-        with st.expander(
-            f"👁️ Preview Scene {index}",
-            expanded=False,
-        ):
+        scene_duration = actual_durations[index - 1]
 
-            col1, col2 = st.columns(
-                [1, 1]
+        if scene_duration <= 0:
+
+            scene_duration = max(
+                3.0,
+                duration / len(scenes),
             )
 
-            with col1:
 
-                st.image(
-                    image_path,
-                    caption=(
-                        f"Scene {index} — "
-                        f"{visual_type.replace('_', ' ').title()}"
+        visual_title = scene.get(
+            "visual_focus",
+            f"Scene {index}",
+        )
+
+
+        # ====================================================
+        # TRUE ANIMATION
+        # ====================================================
+
+        if visual_type in animation_types:
+
+            animation_path = (
+                animation_dir /
+                f"scene_{index:02d}.mp4"
+            )
+
+
+            try:
+
+                create_animation_video(
+                    animation_type=visual_type,
+                    output_path=animation_path,
+                    duration=scene_duration,
+                    title=visual_title,
+                    formula=visual_decision.get(
+                        "formula",
+                        "",
                     ),
-                    use_container_width=True,
+                    explanation=visual_decision.get(
+                        "explanation",
+                        narration,
+                    ),
+                    steps=visual_decision.get(
+                        "equation_steps",
+                        [],
+                    ),
+                    nodes=visual_decision.get(
+                        "diagram_elements",
+                        [],
+                    ),
+                    subject=subject.lower(),
                 )
 
-            with col2:
+            except Exception as exc:
+
+                st.error(
+                    f"Animation generation failed "
+                    f"for Scene {index}:\n{exc}"
+                )
+
+                st.stop()
+
+
+            if not animation_path.exists():
+
+                st.error(
+                    f"Animation was not created "
+                    f"for Scene {index}."
+                )
+
+                st.stop()
+
+
+            animation_files.append(
+                animation_path
+            )
+
+
+            # ------------------------------------------------
+            # ANIMATION PREVIEW
+            # ------------------------------------------------
+
+            with st.expander(
+                f"🎞️ Preview Animated Scene {index}",
+                expanded=False,
+            ):
 
                 st.markdown(
-                    "### 🎙️ Narration"
+                    f"""
+                    <div class="animation-badge">
+                    🎞️ Real Frame Animation
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+                st.video(
+                    str(animation_path)
                 )
 
                 st.write(
-                    narration
-                )
-
-                st.markdown(
-                    "### ⏱️ Voice Duration"
+                    f"**Visual Type:** "
+                    f"{visual_type.replace('_', ' ').title()}"
                 )
 
                 st.write(
-                    f"{generated_duration:.2f} seconds"
+                    f"**Duration:** "
+                    f"{scene_duration:.2f} seconds"
                 )
 
-                st.markdown(
-                    "### 🎨 Visual Method"
+
+        # ====================================================
+        # AI IMAGE
+        # ====================================================
+
+        else:
+
+            image_path = (
+                image_dir /
+                f"scene_{index:02d}.png"
+            )
+
+
+            image_prompt = visual_decision.get(
+                "visual_prompt",
+                scene.get(
+                    "image_prompt",
+                    narration,
+                ),
+            )
+
+
+            on_screen_text = scene.get(
+                "on_screen_text",
+                "",
+            )
+
+
+            try:
+
+                generate_scene_image(
+                    prompt=image_prompt,
+                    on_screen_text=on_screen_text,
+                    scene_title=visual_title,
+                    scene_number=index,
+                    output_path=image_path,
                 )
 
-                st.write(
-                    visual_type.replace(
-                        "_",
-                        " ",
-                    ).title()
+            except Exception as exc:
+
+                st.error(
+                    f"Image generation failed "
+                    f"for Scene {index}:\n{exc}"
                 )
+
+                st.stop()
+
+
+            if not image_path.exists():
+
+                st.error(
+                    f"Image was not created "
+                    f"for Scene {index}."
+                )
+
+                st.stop()
+
+
+            image_files.append(
+                image_path
+            )
+
+
+            # ------------------------------------------------
+            # IMAGE PREVIEW
+            # ------------------------------------------------
+
+            with st.expander(
+                f"👁️ Preview Scene {index}",
+                expanded=False,
+            ):
+
+                col1, col2 = st.columns(
+                    [1, 1]
+                )
+
+                with col1:
+
+                    st.image(
+                        image_path,
+                        caption=(
+                            f"Scene {index} — "
+                            f"{visual_type.replace('_', ' ').title()}"
+                        ),
+                        use_container_width=True,
+                    )
+
+                with col2:
+
+                    st.markdown(
+                        "### 🎙️ Narration"
+                    )
+
+                    st.write(
+                        narration
+                    )
+
+                    st.markdown(
+                        "### 🎨 Visual Method"
+                    )
+
+                    st.write(
+                        visual_type.replace(
+                            "_",
+                            " ",
+                        ).title()
+                    )
 
 
         # ----------------------------------------------------
@@ -815,19 +986,19 @@ if generate_button:
             min(
                 70,
                 int(
-                    40
-                    + scene_progress * 30
+                    55
+                    + scene_progress * 15
                 ),
             )
         )
 
 
     # ========================================================
-    # STEP 4 — SUBTITLES
+    # STEP 5 — SUBTITLES
     # ========================================================
 
     status.info(
-        "📝 Step 4/6 — Creating synchronized subtitles..."
+        "📝 Step 5/6 — Creating synchronized subtitles..."
     )
 
     progress.progress(75)
@@ -835,7 +1006,11 @@ if generate_button:
 
     try:
 
-        subtitle_path = job_dir / "subtitles.srt"
+        subtitle_path = (
+            job_dir /
+            "subtitles.srt"
+        )
+
 
         create_srt(
             scenes=scenes,
@@ -853,11 +1028,12 @@ if generate_button:
 
 
     # ========================================================
-    # STEP 5 — VIDEO RENDERING
+    # STEP 6 — FINAL VIDEO
     # ========================================================
 
     status.info(
-        "🎥 Step 5/6 — Rendering the final educational video..."
+        "🎥 Step 6/6 — Combining animation, narration "
+        "and subtitles into the final video..."
     )
 
     progress.progress(85)
@@ -865,13 +1041,15 @@ if generate_button:
 
     try:
 
-        video_path = job_dir / (
+        video_path = (
+            job_dir /
             "educational_video.mp4"
         )
 
 
         build_video(
             image_files=image_files,
+            animation_files=animation_files,
             audio_files=audio_files,
             durations=actual_durations,
             subtitle_path=subtitle_path,
@@ -880,24 +1058,17 @@ if generate_button:
 
     except TypeError:
 
-        # Compatibility fallback for older video_service
-        try:
+        st.error(
+            """
+            Your video_service.py is still using the
+            old build_video() function.
 
-            video_path = build_video(
-                image_files=image_files,
-                audio_files=audio_files,
-                durations=actual_durations,
-                subtitle_path=subtitle_path,
-                output_path=video_path,
-            )
+            Update video_service.py with the new version
+            before generating the video.
+            """
+        )
 
-        except Exception as exc:
-
-            st.error(
-                f"Video rendering failed:\n{exc}"
-            )
-
-            st.stop()
+        st.stop()
 
     except Exception as exc:
 
@@ -918,15 +1089,14 @@ if generate_button:
 
 
     # ========================================================
-    # STEP 6 — FINAL RESULT
+    # FINAL RESULT
     # ========================================================
 
     status.success(
-        "✅ Step 6/6 — Educational video completed!"
+        "✅ Educational video completed!"
     )
 
     progress.progress(100)
-
 
     st.balloons()
 
@@ -977,6 +1147,7 @@ if generate_button:
 
 
     visual_counts = {}
+
 
     for decision in visual_decisions:
 
@@ -1067,13 +1238,20 @@ if generate_button:
 
         The video includes:
 
-        • AI-generated educational explanation  
-        • Intelligent scene planning  
-        • Visual decision system  
-        • AI visuals  
-        • Multilingual narration  
-        • Synchronized subtitles  
-        • Automatic duration handling  
-        • Educational animation foundation
+        • AI-generated educational explanation
+        • Intelligent scene planning
+        • AI visual decision system
+        • AI-generated visuals
+        • Real frame-based educational animation
+        • Formula animation
+        • Equation step animation
+        • Diagram animation
+        • Physics animation
+        • Chemistry animation
+        • AIVA animation
+        • Multilingual narration
+        • Synchronized subtitles
+        • Automatic duration handling
+        • Final MP4 rendering
         """
     )
