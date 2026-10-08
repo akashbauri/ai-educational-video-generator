@@ -1,6 +1,16 @@
 from pathlib import Path
 import subprocess
+import tempfile
 
+
+WIDTH = 1280
+HEIGHT = 720
+FPS = 24
+
+
+# ============================================================
+# FFmpeg HELPER
+# ============================================================
 
 def run_ffmpeg(
     command: list[str],
@@ -21,56 +31,91 @@ def run_ffmpeg(
         )
 
 
+# ============================================================
+# IMAGE SCENE
+# ============================================================
+
 def render_scene(
     image_path: Path,
     audio_path: Path,
     output_path: Path,
     duration: float,
-    animation: str,
+    animation: str = "zoom",
 ) -> Path:
-
-    fps = 24
 
     frames = max(
         1,
-        int(duration * fps)
+        int(duration * FPS),
     )
+
+    # --------------------------------------------------------
+    # PAN
+    # --------------------------------------------------------
 
     if animation == "pan":
 
         zoom_filter = (
-            f"zoompan="
-            f"z='min(zoom+0.0005,1.08)':"
-            f"x='iw/2-(iw/zoom/2)':"
-            f"y='ih/2-(ih/zoom/2)':"
+            "zoompan="
+            "z='min(zoom+0.0005,1.08)':"
+            "x='iw/2-(iw/zoom/2)':"
+            "y='ih/2-(ih/zoom/2)':"
             f"d={frames}:"
-            f"s=1280x720:"
-            f"fps={fps}"
+            f"s={WIDTH}x{HEIGHT}:"
+            f"fps={FPS}"
         )
+
+    # --------------------------------------------------------
+    # SLIDE
+    # --------------------------------------------------------
 
     elif animation == "slide":
 
         zoom_filter = (
-            f"zoompan="
-            f"z='1.04':"
+            "zoompan="
+            "z='1.04':"
             f"x='(iw-iw/zoom)*on/{frames}':"
-            f"y='(ih-ih/zoom)/2':"
+            "y='(ih-ih/zoom)/2':"
             f"d={frames}:"
-            f"s=1280x720:"
-            f"fps={fps}"
+            f"s={WIDTH}x{HEIGHT}:"
+            f"fps={FPS}"
         )
+
+    # --------------------------------------------------------
+    # CAMERA PUSH / ZOOM
+    # --------------------------------------------------------
+
+    elif animation in {
+        "camera_push",
+        "zoom",
+        "fade",
+    }:
+
+        zoom_filter = (
+            "zoompan="
+            "z='min(zoom+0.0005,1.10)':"
+            "x='iw/2-(iw/zoom/2)':"
+            "y='ih/2-(ih/zoom/2)':"
+            f"d={frames}:"
+            f"s={WIDTH}x{HEIGHT}:"
+            f"fps={FPS}"
+        )
+
+    # --------------------------------------------------------
+    # DEFAULT
+    # --------------------------------------------------------
 
     else:
 
         zoom_filter = (
-            f"zoompan="
-            f"z='min(zoom+0.0005,1.10)':"
-            f"x='iw/2-(iw/zoom/2)':"
-            f"y='ih/2-(ih/zoom/2)':"
+            "zoompan="
+            "z='min(zoom+0.0004,1.06)':"
+            "x='iw/2-(iw/zoom/2)':"
+            "y='ih/2-(ih/zoom/2)':"
             f"d={frames}:"
-            f"s=1280x720:"
-            f"fps={fps}"
+            f"s={WIDTH}x{HEIGHT}:"
+            f"fps={FPS}"
         )
+
 
     command = [
         "ffmpeg",
@@ -92,7 +137,7 @@ def render_scene(
         f"{duration:.3f}",
 
         "-r",
-        str(fps),
+        str(FPS),
 
         "-c:v",
         "libx264",
@@ -114,12 +159,72 @@ def render_scene(
         str(output_path),
     ]
 
-    run_ffmpeg(
-        command
-    )
+    run_ffmpeg(command)
 
     return output_path
 
+
+# ============================================================
+# ADD AUDIO TO TRUE ANIMATION
+# ============================================================
+
+def add_audio_to_animation(
+    animation_path: Path,
+    audio_path: Path,
+    output_path: Path,
+    duration: float,
+) -> Path:
+
+    command = [
+        "ffmpeg",
+        "-y",
+
+        "-i",
+        str(animation_path),
+
+        "-i",
+        str(audio_path),
+
+        "-t",
+        f"{duration:.3f}",
+
+        "-map",
+        "0:v:0",
+
+        "-map",
+        "1:a:0",
+
+        "-c:v",
+        "libx264",
+
+        "-preset",
+        "veryfast",
+
+        "-pix_fmt",
+        "yuv420p",
+
+        "-c:a",
+        "aac",
+
+        "-b:a",
+        "128k",
+
+        "-shortest",
+
+        "-movflags",
+        "+faststart",
+
+        str(output_path),
+    ]
+
+    run_ffmpeg(command)
+
+    return output_path
+
+
+# ============================================================
+# CONCATENATE SCENES
+# ============================================================
 
 def concat_scenes(
     scene_files: list[Path],
@@ -128,8 +233,8 @@ def concat_scenes(
 ) -> Path:
 
     concat_file = (
-        work_dir
-        / "concat.txt"
+        work_dir /
+        "concat.txt"
     )
 
     lines = []
@@ -137,10 +242,12 @@ def concat_scenes(
     for scene_file in scene_files:
 
         safe_path = (
-            str(scene_file)
+            str(
+                scene_file.resolve()
+            )
             .replace(
                 "'",
-                "'\\''"
+                "'\\''",
             )
         )
 
@@ -169,27 +276,29 @@ def concat_scenes(
         "-c",
         "copy",
 
+        "-movflags",
+        "+faststart",
+
         str(output_path),
     ]
 
-    run_ffmpeg(
-        command
-    )
+    run_ffmpeg(command)
 
     return output_path
 
+
+# ============================================================
+# BACKGROUND AUDIO
+# ============================================================
 
 def create_background_audio(
     output_path: Path,
     duration: float,
 ) -> Path:
 
-    # Procedural ambient background.
-    # No external audio file or paid API is required.
-
     filter_complex = (
-        "[0:a]volume=0.025[a0];"
-        "[1:a]volume=0.018[a1];"
+        "[0:a]volume=0.018[a0];"
+        "[1:a]volume=0.012[a1];"
         "[a0][a1]"
         "amix=inputs=2:"
         "duration=longest"
@@ -203,15 +312,21 @@ def create_background_audio(
         "lavfi",
 
         "-i",
-        "sine=frequency=220:"
-        "sample_rate=44100",
+        (
+            "sine="
+            "frequency=220:"
+            "sample_rate=44100"
+        ),
 
         "-f",
         "lavfi",
 
         "-i",
-        "sine=frequency=330:"
-        "sample_rate=44100",
+        (
+            "sine="
+            "frequency=330:"
+            "sample_rate=44100"
+        ),
 
         "-filter_complex",
         filter_complex,
@@ -222,15 +337,20 @@ def create_background_audio(
         "-c:a",
         "aac",
 
+        "-b:a",
+        "96k",
+
         str(output_path),
     ]
 
-    run_ffmpeg(
-        command
-    )
+    run_ffmpeg(command)
 
     return output_path
 
+
+# ============================================================
+# SUBTITLES + MUSIC
+# ============================================================
 
 def add_subtitles_and_music(
     video_path: Path,
@@ -240,7 +360,9 @@ def add_subtitles_and_music(
 ) -> Path:
 
     subtitle_path_string = (
-        str(subtitle_path)
+        str(
+            subtitle_path.resolve()
+        )
         .replace(
             "\\",
             "/",
@@ -249,10 +371,14 @@ def add_subtitles_and_music(
             ":",
             "\\:",
         )
+        .replace(
+            "'",
+            "\\'",
+        )
     )
 
     subtitle_filter = (
-        f"subtitles={subtitle_path_string}:"
+        f"subtitles='{subtitle_path_string}':"
         "force_style='"
         "FontName=DejaVu Sans,"
         "FontSize=18,"
@@ -283,7 +409,8 @@ def add_subtitles_and_music(
             "[0:a][music]"
             "amix=inputs=2:"
             "duration=first:"
-            "dropout_transition=2[a]"
+            "dropout_transition=2"
+            "[a]"
         ),
 
         "-map",
@@ -309,94 +436,259 @@ def add_subtitles_and_music(
 
         "-shortest",
 
+        "-movflags",
+        "+faststart",
+
         str(output_path),
     ]
 
-    run_ffmpeg(
-        command
-    )
+    run_ffmpeg(command)
 
     return output_path
 
 
+# ============================================================
+# FINAL VIDEO BUILDER
+# ============================================================
+
 def build_video(
     image_files: list[Path],
+    animation_files: list[Path],
     audio_files: list[Path],
     durations: list[float],
-    animations: list[str],
     subtitle_path: Path,
-    work_dir: Path,
+    output_path: Path,
 ) -> Path:
+
+    """
+    Build the final educational video.
+
+    A scene can contain either:
+
+    1. AI-generated image
+    2. True frame-based animation
+
+    Each scene receives:
+
+    Visual
+        +
+    Narration
+        +
+    Duration
+
+    Then all scenes are combined,
+    background audio is added,
+    subtitles are burned,
+    and the final MP4 is produced.
+    """
+
+    output_path = Path(
+        output_path
+    )
+
+    work_dir = Path(
+        tempfile.mkdtemp(
+            prefix="educational_video_"
+        )
+    )
 
     rendered_scene_files = []
 
+
+    # ========================================================
+    # CREATE LOOKUP TABLES
+    # ========================================================
+
+    image_lookup = {
+        Path(file).stem: Path(file)
+        for file in image_files
+    }
+
+    animation_lookup = {
+        Path(file).stem: Path(file)
+        for file in animation_files
+    }
+
+
+    # ========================================================
+    # PROCESS EVERY SCENE
+    # ========================================================
+
     for index, (
-        image_file,
         audio_file,
         duration,
-        animation,
     ) in enumerate(
         zip(
-            image_files,
             audio_files,
             durations,
-            animations,
         ),
         start=1,
     ):
 
-        scene_video = (
-            work_dir
-            / f"scene_{index:02d}.mp4"
+        scene_key = (
+            f"scene_{index:02d}"
         )
 
-        render_scene(
-            image_path=image_file,
-            audio_path=audio_file,
-            output_path=scene_video,
-            duration=duration,
-            animation=animation,
+        scene_video = (
+            work_dir /
+            f"{scene_key}.mp4"
         )
+
+        duration = max(
+            0.5,
+            float(duration),
+        )
+
+
+        # ====================================================
+        # TRUE ANIMATION SCENE
+        # ====================================================
+
+        if scene_key in animation_lookup:
+
+            add_audio_to_animation(
+                animation_path=(
+                    animation_lookup[
+                        scene_key
+                    ]
+                ),
+                audio_path=Path(
+                    audio_file
+                ),
+                output_path=scene_video,
+                duration=duration,
+            )
+
+
+        # ====================================================
+        # AI IMAGE SCENE
+        # ====================================================
+
+        elif scene_key in image_lookup:
+
+            render_scene(
+                image_path=(
+                    image_lookup[
+                        scene_key
+                    ]
+                ),
+                audio_path=Path(
+                    audio_file
+                ),
+                output_path=scene_video,
+                duration=duration,
+                animation="zoom",
+            )
+
+
+        # ====================================================
+        # NO VISUAL
+        # ====================================================
+
+        else:
+
+            raise RuntimeError(
+                f"No visual found for "
+                f"{scene_key}."
+            )
+
+
+        if not scene_video.exists():
+
+            raise RuntimeError(
+                f"Scene video was not created "
+                f"for {scene_key}."
+            )
+
 
         rendered_scene_files.append(
             scene_video
         )
 
+
+    # ========================================================
+    # CONCATENATE
+    # ========================================================
+
     combined_video = (
-        work_dir
-        / "combined.mp4"
+        work_dir /
+        "combined.mp4"
     )
 
     concat_scenes(
-        rendered_scene_files,
-        combined_video,
-        work_dir,
+        scene_files=rendered_scene_files,
+        output_path=combined_video,
+        work_dir=work_dir,
     )
 
+
+    # ========================================================
+    # BACKGROUND AUDIO
+    # ========================================================
+
     total_duration = sum(
-        durations
+        float(duration)
+        for duration in durations
     )
 
     background_music = (
-        work_dir
-        / "background.m4a"
+        work_dir /
+        "background.m4a"
     )
 
     create_background_audio(
-        background_music,
-        total_duration,
+        output_path=background_music,
+        duration=total_duration,
     )
 
+
+    # ========================================================
+    # FINAL VIDEO
+    # ========================================================
+
     final_video = (
-        work_dir
-        / "educational_video.mp4"
+        work_dir /
+        "educational_video.mp4"
     )
 
     add_subtitles_and_music(
         video_path=combined_video,
-        subtitle_path=subtitle_path,
+        subtitle_path=Path(
+            subtitle_path
+        ),
         music_path=background_music,
         output_path=final_video,
     )
 
-    return final_video
+
+    # ========================================================
+    # COPY FINAL FILE TO REQUESTED LOCATION
+    # ========================================================
+
+    if final_video.resolve() != output_path.resolve():
+
+        output_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        command = [
+            "ffmpeg",
+            "-y",
+
+            "-i",
+            str(final_video),
+
+            "-c",
+            "copy",
+
+            "-movflags",
+            "+faststart",
+
+            str(output_path),
+        ]
+
+        run_ffmpeg(command)
+
+
+    return output_path
