@@ -367,7 +367,7 @@ SOURCE MATERIAL:
 
             temperature=0.25,
 
-            max_tokens=3500,
+            max_tokens=4000,
 
             response_format={
                 "type": "json_object"
