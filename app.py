@@ -434,17 +434,67 @@ if generate_button:
         st.stop()
 
 
-    if not scenes:
+    # ========================================================
+    # NORMALIZE AND VALIDATE SCENE DATA
+    # Some model responses may return a dictionary containing
+    # "scenes", a list of dictionaries, or a list of strings.
+    # Downstream pipeline code requires every scene to be a dict.
+    # ========================================================
 
+    if isinstance(scenes, dict):
+        scenes = scenes.get("scenes", [])
+
+    if not isinstance(scenes, list) or not scenes:
         st.error(
-            "The AI did not generate any scenes."
+            "The AI did not return a valid scene list. "
+            "Please try again."
         )
-
         st.stop()
 
+    normalized_scenes = []
+
+    for scene_index, scene in enumerate(scenes, start=1):
+        if isinstance(scene, str):
+            scene = {
+                "narration": scene,
+                "image_prompt": scene,
+                "on_screen_text": "",
+                "visual_focus": f"Scene {scene_index}",
+            }
+        elif isinstance(scene, dict):
+            scene = dict(scene)
+        else:
+            st.error(
+                f"Scene {scene_index} has an unsupported format "
+                f"({type(scene).__name__}). Please try again."
+            )
+            st.stop()
+
+        narration_value = scene.get("narration", "")
+        if narration_value is None:
+            narration_value = ""
+        elif not isinstance(narration_value, str):
+            narration_value = str(narration_value)
+
+        scene["narration"] = narration_value.strip()
+
+        if not scene["narration"]:
+            st.error(
+                f"Scene {scene_index} has no narration. "
+                "Please try generating the video again."
+            )
+            st.stop()
+
+        # Ensure optional fields used by the visual pipeline are safe.
+        scene.setdefault("image_prompt", scene["narration"])
+        scene.setdefault("on_screen_text", "")
+        scene.setdefault("visual_focus", f"Scene {scene_index}")
+        normalized_scenes.append(scene)
+
+    scenes = normalized_scenes
 
     st.success(
-        f"AI created {len(scenes)} educational scenes."
+        f"AI created {len(scenes)} valid educational scenes."
     )
 
 
