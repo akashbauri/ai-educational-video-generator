@@ -1,7 +1,4 @@
-from pathlib import Path
-import ast
-
-code = r'''import json
+import json
 import os
 import re
 import time
@@ -94,6 +91,33 @@ def _get_setting(name: str, default: Optional[str] = None) -> Optional[str]:
         return st.secrets.get(name, default)
     except Exception:
         return default
+
+
+def _get_api_keys() -> List[str]:
+    """Load keys from GROQ_API_KEYS; fall back to the legacy LLM_API_KEY."""
+    raw_keys = _get_setting("GROQ_API_KEYS")
+    keys: List[str] = []
+
+    if isinstance(raw_keys, (list, tuple)):
+        keys = [str(item).strip() for item in raw_keys if str(item).strip()]
+    elif isinstance(raw_keys, str) and raw_keys.strip():
+        keys = [item.strip().strip("\\\"'") for item in raw_keys.split(",") if item.strip()]
+
+    if not keys:
+        single_key = _get_setting("LLM_API_KEY")
+        if single_key and str(single_key).strip():
+            keys = [str(single_key).strip()]
+
+    return list(dict.fromkeys(keys))
+
+
+def _is_auth_error(exc: Exception) -> bool:
+    status = getattr(exc, "status_code", None)
+    message = str(exc).lower()
+    return status in (401, 403) or any(
+        phrase in message
+        for phrase in ("invalid api key", "incorrect api key", "authentication", "unauthorized", "revoked")
+    )
 
 
 def _extract_json(content: str) -> Dict[str, Any]:
@@ -258,12 +282,14 @@ def create_video_plan(
     duration: int = 120,
 ) -> Dict[str, Any]:
     """Generate a compact scene plan compatible with Phase 2 visual services."""
-    api_key = _get_setting("LLM_API_KEY")
+    api_keys = _get_api_keys()
     base_url = _get_setting("LLM_BASE_URL", "https://api.groq.com/openai/v1")
     model = _get_setting("LLM_MODEL")
 
-    if not api_key:
-        raise ValueError("Missing LLM_API_KEY in Streamlit Secrets.")
+    if not api_keys:
+        raise ValueError(
+            "Missing GROQ_API_KEYS (or legacy LLM_API_KEY) in Streamlit Secrets."
+        )
     if not base_url:
         raise ValueError("Missing LLM_BASE_URL in Streamlit Secrets.")
     if not model:
@@ -300,70 +326,98 @@ LESSON:
 {text.strip()}
 """
 
-    client = OpenAI(
-        api_key=api_key,
-        base_url=base_url,
-        timeout=90.0,
-        max_retries=0,
-    )
-
     last_error = None
-    token_budgets = [DEFAULT_OUTPUT_TOKENS, COMPACT_OUTPUT_TOKENS]
+    token_budgets = [DEFAULT_OUTPUT_TOKENS, COMPACT_OUTPUT_TOKENS, 350]
+    cycle_number = 0
 
-    for attempt in range(MAX_RETRIES + 1):
-        token_budget = token_budgets[min(attempt, len(token_budgets) - 1)]
+    # Continuous circular rotation: key 1 -> ... -> key N -> key 1.
+    # Each full cycle pauses before retrying, and the secrets are re-read so
+    # a manually replaced key can be picked up after the app refreshes.
+    while True:
+        cycle_number += 1
+        # Reload keys each cycle to pick up updated Streamlit Secrets/env vars.
+        refreshed_keys = _get_api_keys()
+        if refreshed_keys:
+            api_keys = refreshed_keys
+
+        token_budget = token_budgets[min(cycle_number - 1, len(token_budgets) - 1)]
         compact_instruction = ""
-        if attempt > 0:
+        if cycle_number > 1:
             compact_instruction = (
-                "\nIMPORTANT: Be more compact. Use 5-8 scenes if suitable, "
-                "short visual fields, and no redundant detail. Preserve the "
-                "narration and return valid complete JSON.\n"
+                "\nIMPORTANT: Keep the JSON compact. Use 5-8 scenes if suitable, "
+                "short visual fields, and no redundant detail. Preserve useful "
+                "narration and return complete valid JSON.\n"
             )
-
         request_prompt = prompt + compact_instruction
+        last_error = None
+        saw_rate_limit = False
+        saw_auth_error = False
 
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                temperature=0.2,
-                max_tokens=token_budget,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": request_prompt},
-                ],
+        # This for-loop wraps naturally to key 1 on the next while-loop cycle.
+        for key_index, api_key in enumerate(api_keys):
+            client = OpenAI(
+                api_key=api_key,
+                base_url=base_url,
+                timeout=90.0,
+                max_retries=0,
             )
 
-            if not response.choices:
-                raise ValueError("The AI returned no choices.")
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    temperature=0.2,
+                    max_tokens=token_budget,
+                    messages=[
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": request_prompt},
+                    ],
+                )
 
-            choice = response.choices[0]
-            content = choice.message.content
-            if not content or not content.strip():
-                raise ValueError("The AI returned an empty scene plan.")
+                if not response.choices:
+                    raise ValueError("The AI returned no choices.")
 
-            if choice.finish_reason == "length":
-                last_error = ValueError("The response was truncated by the token limit.")
-                if attempt < MAX_RETRIES:
+                choice = response.choices[0]
+                content = choice.message.content
+                if not content or not content.strip():
+                    raise ValueError("The AI returned an empty scene plan.")
+
+                if choice.finish_reason == "length":
+                    last_error = ValueError(
+                        "The response was truncated by the token limit."
+                    )
+                    # Try the next key, then retry with a smaller output budget.
                     continue
-                raise last_error
 
-            plan = _extract_json(content)
-            return _normalize_plan(plan, target_seconds=duration)
+                plan = _extract_json(content)
+                return _normalize_plan(plan, target_seconds=duration)
 
-        except Exception as exc:
-            last_error = exc
+            except Exception as exc:
+                last_error = exc
+                if _is_auth_error(exc):
+                    saw_auth_error = True
+                    # This key may be revoked/invalid; move to the next slot.
+                    continue
+                if _is_rate_limit_error(exc):
+                    saw_rate_limit = True
+                    # Try the next key. If all keys fail, pause before cycling.
+                    continue
+                if isinstance(exc, ValueError):
+                    # Invalid/truncated model output: move through keys and
+                    # then retry the next cycle with a smaller output budget.
+                    continue
+                raise RuntimeError(
+                    f"Video scene planning failed on key slot {key_index + 1}: {exc}"
+                ) from exc
 
-            # On rate-limit errors, try a smaller request after the provider's
-            # short-term window has time to reset. Never retry auth/bad-request errors.
-            if _is_rate_limit_error(exc) and attempt < MAX_RETRIES:
-                time.sleep(62)
-                continue
-
-            if isinstance(exc, ValueError):
-                raise
-            raise RuntimeError(f"Video scene planning failed: {exc}") from exc
-
-    raise RuntimeError(f"Video scene planning failed: {last_error}")
+        # Every configured key failed this cycle. Pause to avoid hammering the API.
+        if saw_rate_limit:
+            time.sleep(62)
+        elif saw_auth_error:
+            # Allows time for a manually replaced key/app secrets refresh.
+            time.sleep(20)
+        else:
+            # Repeated malformed/truncated responses: pause, then retry compactly.
+            time.sleep(5)
 
 
 def generate_scene_plan(
@@ -380,10 +434,3 @@ def generate_scene_plan(
         duration=target_seconds,
     )
     return plan["scenes"]
-'''
-
-# Syntax validation before saving.
-ast.parse(code)
-out = Path("/mnt/data/llm_service_phase2.py")
-out.write_text(code, encoding="utf-8")
-print(f"Created {out} ({len(code.splitlines())} lines). Python syntax check passed.")
